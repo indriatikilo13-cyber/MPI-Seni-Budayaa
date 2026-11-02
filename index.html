@@ -1,0 +1,178 @@
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    lock.waitLock(10000);
+
+    if (!e || !e.postData || !e.postData.contents) {
+      throw new Error("Data yang dikirim kosong.");
+    }
+
+    var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // =====================================
+    // 1. SIMPAN DATA SOAL
+    // =====================================
+
+    if (data.action === "saveQuestions") {
+
+      if (!Array.isArray(data.questions)) {
+        throw new Error("Format data soal tidak valid.");
+      }
+
+      var sheetSoal = getOrCreateSheet(
+        ss,
+        "Data Soal",
+        [
+          "Kategori Menu",
+          "ID Soal",
+          "Stimulus Literasi / Numerasi",
+          "Pertanyaan / Judul Tantangan",
+          "Pilihan Jawaban",
+          "Kunci Jawaban Benar"
+        ]
+      );
+
+      // Hapus data lama, pertahankan header
+      if (sheetSoal.getLastRow() > 1) {
+        sheetSoal.getRange(
+          2, 1,
+          sheetSoal.getLastRow() - 1, 6
+        ).clearContent();
+      }
+
+      var rowsSoal = data.questions.map(function(q) {
+        return [
+          q.type || "",
+          q.id || "",
+          q.stimulus || "",
+          q.question || "",
+          Array.isArray(q.options)
+            ? JSON.stringify(q.options)
+            : (q.options || ""),
+          q.correctAnswer || ""
+        ];
+      });
+
+      if (rowsSoal.length > 0) {
+        sheetSoal.getRange(
+          2, 1,
+          rowsSoal.length, 6
+        ).setValues(rowsSoal);
+      }
+
+      return responseJSON({
+        status: "success",
+        message: "Data soal berhasil disinkronkan.",
+        total: rowsSoal.length
+      });
+    }
+
+    // =====================================
+    // 2. SIMPAN HASIL SISWA
+    // =====================================
+
+    if (data.action === "saveResult") {
+
+      if (!data.studentName || !data.studentClass) {
+        throw new Error("Nama siswa dan kelas wajib diisi.");
+      }
+
+      var sheetHasil = getOrCreateSheet(
+        ss,
+        "Hasil",
+        [
+          "Waktu Pengerjaan",
+          "Nama Siswa",
+          "Kelas",
+          "Jumlah Jawaban Benar",
+          "Jumlah Jawaban Salah",
+          "Detail Inputan Jawaban Siswa"
+        ]
+      );
+
+      var timestamp = Utilities.formatDate(
+        new Date(),
+        "Asia/Makassar",
+        "yyyy-MM-dd HH:mm:ss"
+      );
+
+      sheetHasil.appendRow([
+        timestamp,
+        data.studentName,
+        data.studentClass,
+        Number(data.correctCount) || 0,
+        Number(data.wrongCount) || 0,
+        typeof data.answerDetails === "string"
+          ? data.answerDetails
+          : JSON.stringify(data.answerDetails || [])
+      ]);
+
+      return responseJSON({
+        status: "success",
+        message: "Hasil pengerjaan siswa berhasil disimpan."
+      });
+    }
+
+    return responseJSON({
+      status: "error",
+      message: "Aksi tidak dikenal."
+    });
+
+  } catch (error) {
+
+    return responseJSON({
+      status: "error",
+      message: error.message
+    });
+
+  } finally {
+    if (lock.hasLock()) {
+      lock.releaseLock();
+    }
+  }
+}
+
+// =====================================
+// 3. FUNGSI MEMBUAT SHEET OTOMATIS
+// =====================================
+
+function getOrCreateSheet(ss, sheetName, headers) {
+
+  var sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(headers);
+  }
+
+  var headerRange = sheet.getRange(
+    1, 1, 1, headers.length
+  );
+
+  headerRange
+    .setBackground("#059669")
+    .setFontColor("#FFFFFF")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center")
+    .setVerticalAlignment("middle");
+
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+
+  return sheet;
+}
+
+// =====================================
+// 4. FORMAT RESPONSE JSON
+// =====================================
+
+function responseJSON(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
